@@ -39,7 +39,7 @@ KEY_LEVELS = [4264.0, 4280.0, 4300.0, 4305.6, 4311.0, 4325.0, 4338.0, 4344.0]
 stats = {'total_trades': 0, 'wins': 0, 'losses': 0, 'total_r': 0.0}
 active_trade = None
 
-def get_candles(timeframe, limit=100):
+def get_candles(timeframe, limit=50):
     try:
         ohlcv = exchange.fetch_ohlcv(SYMBOL, timeframe=timeframe, limit=limit)
         if not ohlcv or len(ohlcv) < 5:
@@ -50,32 +50,21 @@ def get_candles(timeframe, limit=100):
         print(f"Gold fetch error: {e}", flush=True)
         return None
 
-def get_true_swing_levels(df, window=2):
-    if df is None or len(df) < (window * 2 + 5):
+def get_true_swing_levels(df):
+    """
+    बिना लूप इंडेक्सिंग के रोलिंग विंडो से V-Shape Swing High/Low निकालना (Zero Index Error)
+    """
+    if df is None or len(df) < 10:
         return None, None
     
-    swing_highs = []
-    swing_lows = []
+    df['is_swing_high'] = (df['high'] == df['high'].rolling(5, center=True).max())
+    df['is_swing_low'] = (df['low'] == df['low'].rolling(5, center=True).min())
     
-    for i in range(window, len(df) - 1):
-        is_high = True
-        for k in range(1, window + 1):
-            if df['high'].iloc[i] <= df['high'].iloc[i - k] or df['high'].iloc[i] <= df['high'].iloc[i + k]:
-                is_high = False
-                break
-        if is_high:
-            swing_highs.append(df['high'].iloc[i])
+    highs = df[df['is_swing_high']]['high'].tolist()
+    lows = df[df['is_swing_low']]['low'].tolist()
 
-        is_low = True
-        for k in range(1, window + 1):
-            if df['low'].iloc[i] >= df['low'].iloc[i - k] or df['low'].iloc[i] >= df['low'].iloc[i + k]:
-                is_low = False
-                break
-        if is_low:
-            swing_lows.append(df['low'].iloc[i])
-
-    major_swing_high = swing_highs[-1] if swing_highs else df['high'].max()
-    major_swing_low = swing_lows[-1] if swing_lows else df['low'].min()
+    major_swing_high = float(highs[-1]) if highs else float(df['high'].iloc[:-1].max())
+    major_swing_low = float(lows[-1]) if lows else float(df['low'].iloc[:-1].min())
 
     return major_swing_low, major_swing_high
 
@@ -92,22 +81,22 @@ def run_trading_bot():
 
     while True:
         try:
-            df_4h = get_candles('4h', limit=60)
+            df_4h = get_candles('4h', limit=50)
             df_15m = get_candles('15m', limit=20)
             
-            if df_4h is None or df_15m is None or len(df_15m) < 3:
+            if df_4h is None or df_15m is None or len(df_15m) < 5:
                 time.sleep(10)
                 continue
 
-            swing_low_4h, swing_high_4h = get_true_swing_levels(df_4h, window=2)
+            swing_low_4h, swing_high_4h = get_true_swing_levels(df_4h)
             if swing_low_4h is None or swing_high_4h is None:
                 time.sleep(10)
                 continue
 
             last_closed = df_15m.iloc[-2]
-            current_price = df_15m['close'].iloc[-1]
+            current_price = float(df_15m['close'].iloc[-1])
 
-            print(f"[STATUS] XAU/USD Spot: ${current_price:.2f} | Swings: [${swing_low_4h:.2f} - ${swing_high_4h:.2f}]", flush=True)
+            print(f"[STATUS] XAU/USD Spot: ${current_price:.2f} | True Swings: [${swing_low_4h:.2f} - ${swing_high_4h:.2f}]", flush=True)
 
             # A. ACTIVE TRADE SL/TP
             if active_trade is not None:
@@ -157,10 +146,10 @@ def run_trading_bot():
                 level_states[lvl] = current_rel
 
             # C. SWEEP LOGIC
-            c_open = last_closed['open']
-            c_low = last_closed['low']
-            c_high = last_closed['high']
-            c_close = last_closed['close']
+            c_open = float(last_closed['open'])
+            c_low = float(last_closed['low'])
+            c_high = float(last_closed['high'])
+            c_close = float(last_closed['close'])
 
             if c_low < swing_low_4h and not buy_sweep_active:
                 buy_sweep_active = True
@@ -208,4 +197,4 @@ if __name__ == '__main__':
     t.daemon = True
     t.start()
     run_trading_bot()
-                        
+    
