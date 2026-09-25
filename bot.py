@@ -26,22 +26,21 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "XAU/USD Spot Gold Active Trade & Key Level Bot is Running!"
+    return "XAUUSD Spot Gold Active Trade & Key Level Bot is Running!"
 
 def start_web_server():
     app.run(host='0.0.0.0', port=10000)
 
 # ----------------- 3. EXCHANGE & SPOT GOLD CONFIG -----------------
-# Binance Futures का XAUUSDT (Gold Spot/Perp) - TradingView XAUUSD से एकदम मैच करता है
-exchange = ccxt.binance({
-    'enableRateLimit': True,
-    'options': {'defaultType': 'future'}
+# Kraken US सर्वर पर 100% अनुमत है (कोई 451 ब्लॉक नहीं)
+exchange = ccxt.kraken({
+    'enableRateLimit': True
 })
-SYMBOL = 'XAU/USDT'
+SYMBOL = 'PAXG/USD'     # 1 PAXG = 1 Troy Ounce Spot Gold (XAUUSD)
 RR_RATIO = 5.0          # 1:5 Risk-to-Reward
 SL_BUFFER = 1.5         # $1.50 Stop Loss buffer
 
-# आपके स्पॉट चार्ट के मुख्य लेवल्स
+# आपके स्पॉट चार्ट के मुख्य स्तर
 KEY_LEVELS = [4264.0, 4280.0, 4300.0, 4305.6, 4311.0, 4325.0, 4338.0, 4344.0]
 
 # ----------------- 4. PERFORMANCE TRACKER -----------------
@@ -61,7 +60,7 @@ def get_candles(timeframe, limit=50):
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         return df
     except Exception as e:
-        print(f"Fetch error: {e}", flush=True)
+        print(f"Kraken fetch error: {e}", flush=True)
         return None
 
 def get_4h_key_levels():
@@ -75,8 +74,8 @@ def get_4h_key_levels():
 # ----------------- 6. MAIN TRADING & TRACKING LOOP -----------------
 def run_trading_bot():
     global active_trade, stats
-    print("XAU/USD Spot Bot active...", flush=True)
-    send_telegram_msg("🟡 *GOLD (XAU/USD SPOT) Bot Online!*\n• Data: Live Spot/Perp Stream\n• Strategy: 4H/15M Liquidity Sweep (1:5 RR)\n• Live SL/TP Tracker & Key Levels Active.")
+    print("XAU/USD Spot Bot active on Kraken...", flush=True)
+    send_telegram_msg("🟡 *GOLD (XAU/USD SPOT) Bot Online!*\n• Data: Live Spot Gold (Kraken)\n• Strategy: 4H/15M Liquidity Sweep (1:5 RR)\n• Live SL/TP Tracker & Key Levels Active.")
 
     level_states = {}
     buy_sweep_active = False
