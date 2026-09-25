@@ -1,4 +1,4 @@
-import yfinance as yf
+import ccxt
 import time
 import pandas as pd
 import threading
@@ -21,22 +21,27 @@ def send_telegram_msg(message):
     except Exception as e:
         print(f"Telegram error: {e}", flush=True)
 
-# ----------------- 2. WEB SERVER (FOR RENDER PING) -----------------
+# ----------------- 2. WEB SERVER (RENDER KEEP-ALIVE) -----------------
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "XAUUSD Spot Gold Active Trade & Key Level Bot is Running!"
+    return "XAU/USD Spot Gold Active Trade & Key Level Bot is Running!"
 
 def start_web_server():
     app.run(host='0.0.0.0', port=10000)
 
-# ----------------- 3. CONFIGURATION & SPOT GOLD -----------------
-SYMBOL = 'XAUUSD=X'     # Spot Gold (TradingView XAUUSD)
+# ----------------- 3. EXCHANGE & SPOT GOLD CONFIG -----------------
+# Binance Futures का XAUUSDT (Gold Spot/Perp) - TradingView XAUUSD से एकदम मैच करता है
+exchange = ccxt.binance({
+    'enableRateLimit': True,
+    'options': {'defaultType': 'future'}
+})
+SYMBOL = 'XAU/USDT'
 RR_RATIO = 5.0          # 1:5 Risk-to-Reward
 SL_BUFFER = 1.5         # $1.50 Stop Loss buffer
 
-# यहाँ आप अपने मनपसंद नंबर्स कभी भी बदल या जोड़ सकते हैं
+# आपके स्पॉट चार्ट के मुख्य लेवल्स
 KEY_LEVELS = [4264.0, 4280.0, 4300.0, 4305.6, 4311.0, 4325.0, 4338.0, 4344.0]
 
 # ----------------- 4. PERFORMANCE TRACKER -----------------
@@ -47,26 +52,31 @@ stats = {
     'total_r': 0.0
 }
 
-active_trade = None  # Live position tracking
+active_trade = None
 
 # ----------------- 5. DATA FUNCTIONS -----------------
-def get_candles(interval, period):
-    ticker = yf.Ticker(SYMBOL)
-    df = ticker.history(period=period, interval=interval)
-    df = df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close'})
-    return df
+def get_candles(timeframe, limit=50):
+    try:
+        ohlcv = exchange.fetch_ohlcv(SYMBOL, timeframe=timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        return df
+    except Exception as e:
+        print(f"Fetch error: {e}", flush=True)
+        return None
 
 def get_4h_key_levels():
-    df_1h = get_candles(interval='1h', period='7d')
-    key_low = df_1h['low'].iloc[-41:-1].min()
-    key_high = df_1h['high'].iloc[-41:-1].max()
+    df_4h = get_candles('4h', limit=25)
+    if df_4h is None or len(df_4h) < 15:
+        return None, None
+    key_low = df_4h['low'].iloc[-11:-1].min()
+    key_high = df_4h['high'].iloc[-11:-1].max()
     return key_low, key_high
 
 # ----------------- 6. MAIN TRADING & TRACKING LOOP -----------------
 def run_trading_bot():
     global active_trade, stats
-    print("Spot Gold Bot active...", flush=True)
-    send_telegram_msg("🟡 *GOLD (XAU/USD SPOT) Bot Online!*\n• Data: Live Spot Market\n• Strategy: 4H/15M Liquidity Sweep (1:5 RR)\n• Live SL/TP Tracker & Key Levels Active.")
+    print("XAU/USD Spot Bot active...", flush=True)
+    send_telegram_msg("🟡 *GOLD (XAU/USD SPOT) Bot Online!*\n• Data: Live Spot/Perp Stream\n• Strategy: 4H/15M Liquidity Sweep (1:5 RR)\n• Live SL/TP Tracker & Key Levels Active.")
 
     level_states = {}
     buy_sweep_active = False
@@ -76,13 +86,20 @@ def run_trading_bot():
 
     while True:
         try:
-            # 15 मिनट कैंडल डेटा
-            df_15m = get_candles(interval='15m', period='2d')
+            df_15m = get_candles('15m', limit=15)
+            if df_15m is None or len(df_15m) < 3:
+                time.sleep(10)
+                continue
+
             last_closed = df_15m.iloc[-2]
             current_bar = df_15m.iloc[-1]
             current_price = current_bar['close']
 
             key_low_4h, key_high_4h = get_4h_key_levels()
+            if key_low_4h is None:
+                time.sleep(10)
+                continue
+
             print(f"[STATUS] XAU/USD Spot: ${current_price:.2f} | Range: [${key_low_4h:.2f} - ${key_high_4h:.2f}]", flush=True)
 
             # === A. ACTIVE TRADE SL / TP MONITORING ===
@@ -91,7 +108,6 @@ def run_trading_bot():
                 entry = active_trade['entry']
                 sl = active_trade['sl']
                 tp = active_trade['tp']
-                risk = active_trade['risk']
 
                 # BUY TRADE EXIT CHECK
                 if side == 'BUY':
@@ -170,15 +186,15 @@ def run_trading_bot():
 
                 if prev_rel is not None and prev_rel != current_rel:
                     if prev_rel == "BELOW" and current_rel == "ABOVE":
-                        send_telegram_msg(f"⚡ *[GOLD LEVEL BREAKOUT UP]*\nPrice ने ${lvl:.2f} का रेजिस्टेंस पार कर लिया है!\nLive Spot: ${current_price:.2f}")
+                        send_telegram_msg(f"⚡ *[GOLD LEVEL BREAKOUT UP]*\nPrice ने ${lvl:.2f} का रेजिस्टेंस पार कर लिया!\nLive Spot: ${current_price:.2f}")
                     elif prev_rel == "ABOVE" and current_rel == "BELOW":
-                        send_telegram_msg(f"⚡ *[GOLD LEVEL BREAKDOWN]*\nPrice ने ${lvl:.2f} का सपोर्ट नीचे तोड़ दिया है!\nLive Spot: ${current_price:.2f}")
+                        send_telegram_msg(f"⚡ *[GOLD LEVEL BREAKDOWN]*\nPrice ने ${lvl:.2f} का सपोर्ट नीचे तोड़ दिया!\nLive Spot: ${current_price:.2f}")
 
-                # Level Touch (दूरी $1.00 से कम होने पर)
-                if abs(current_price - lvl) <= 1.0 and level_states.get(f"{lvl}_touched") is not True:
+                # Level Touch (दूरी $0.80 के भीतर होने पर)
+                if abs(current_price - lvl) <= 0.8 and level_states.get(f"{lvl}_touched") is not True:
                     send_telegram_msg(f"🔔 *[GOLD KEY LEVEL REACHED]*\nPrice Key Level ${lvl:.2f} के पास पहुँच गया है!\nLive Spot: ${current_price:.2f}")
                     level_states[f"{lvl}_touched"] = True
-                elif abs(current_price - lvl) > 2.5:
+                elif abs(current_price - lvl) > 2.0:
                     level_states[f"{lvl}_touched"] = False
 
                 level_states[lvl] = current_rel
